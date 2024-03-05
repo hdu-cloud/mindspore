@@ -1,5 +1,0 @@
-#! /usr/bin/env bash
-
-shellcheck --version
-
-shellcheck -e SC1071 -e SC2086 "$@"
